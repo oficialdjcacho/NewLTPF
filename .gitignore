@@ -1,0 +1,30 @@
+# Configuraciones locales
+config.json
+
+# Datos generados / sensibles
+datos/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.bak
+*.tmp
+*.cache
+
+# Compilados de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Entornos
+.venv/
+venv/
+env/
+.venv*/
+venv*/
+env*/
+
+# IDEs
+.vscode/
+.idea/
+*.code-workspace
