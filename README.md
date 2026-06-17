@@ -186,6 +186,22 @@ El resumen tambien se guarda en:
 datos/analisis_rendimiento_YYYYMMDD_HHMMSS.log
 ```
 
+El indexado de biblioteca genera otro resumen:
+
+```text
+datos/indexado_rendimiento_YYYYMMDD_HHMMSS.log
+```
+
+Ese log separa escaneo de carpetas, extraccion de metadata, escritura JSON, escritura SQLite, generacion de alias, cantidad de workers, archivos por segundo y tamano final de los indices.
+
+La GUI guarda tambien una traza por sesion:
+
+```text
+datos/app_trace_YYYYMMDD_HHMMSS.log
+```
+
+Sirve para revisar el flujo completo: previsualizacion, carga de indice, analisis por playlist, mensajes del indexador y tiempos de las operaciones de UI.
+
 ---
 
 ## Documentación útil

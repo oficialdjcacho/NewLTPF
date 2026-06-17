@@ -383,6 +383,8 @@ class PlaylistUpdaterApp:
         self._current_manual_override: dict[int, str] = {}
         self._progress_refresh_state: dict[str, dict[str, float | int]] = {}
         self._last_route_status: tuple[str, float] = ("", 0.0)
+        os.makedirs(DATOS_DIR, exist_ok=True)
+        self._app_log_path = os.path.join(DATOS_DIR, f"app_trace_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 
         self.playback = PlaybackController(on_status=self._set_player_state)
 
@@ -627,6 +629,7 @@ class PlaylistUpdaterApp:
         self.log_text = ScrolledText(self.logs_tab, height=20, wrap="word")
         self.log_text.pack(fill="both", expand=True)
         self._log("UI inicializada.")
+        self._log(f"Log de sesión: {self._app_log_path}")
         if not self.playback.available:
             self._log("Reproductor no disponible: python-vlc no está instalado o VLC no está accesible.")
 
@@ -640,6 +643,11 @@ class PlaylistUpdaterApp:
     def _append_log(self, message: str):
         stamp = datetime.now().strftime("%H:%M:%S")
         text = f"[{stamp}] {message}\n"
+        try:
+            with open(self._app_log_path, "a", encoding="utf-8") as f:
+                f.write(text)
+        except Exception:
+            pass
         try:
             self.log_text.insert("end", text)
             self.log_text.see("end")

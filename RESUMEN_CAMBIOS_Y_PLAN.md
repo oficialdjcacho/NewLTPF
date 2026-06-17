@@ -90,6 +90,31 @@ Este documento resume el estado real de la nueva versión de LTPF y deja una hoj
 datos/analisis_rendimiento_YYYYMMDD_HHMMSS.log
 ```
 
+### 1.9 Log de indexado y traza persistente de GUI
+
+- Se anadio un log especifico para el indexado:
+
+```text
+datos/indexado_rendimiento_YYYYMMDD_HHMMSS.log
+```
+
+- Este log separa:
+  - carga de JSON existente;
+  - escaneo de carpetas;
+  - extraccion de metadata;
+  - preparacion SQLite;
+  - escritura JSON;
+  - escritura SQLite;
+  - generacion de sugerencias de alias.
+- Tambien registra workers, archivos por segundo, tamano de indices y cantidad de archivos sin metadata legible.
+- La GUI guarda una traza por sesion en:
+
+```text
+datos/app_trace_YYYYMMDD_HHMMSS.log
+```
+
+- El JSON de indice nuevo se guarda en formato compacto para reducir tamano y tiempo de escritura.
+
 ---
 
 ## 2) Estado actual de la arquitectura

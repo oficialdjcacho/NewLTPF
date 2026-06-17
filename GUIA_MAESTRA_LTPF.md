@@ -273,6 +273,22 @@ datos/analisis_rendimiento_YYYYMMDD_HHMMSS.log
 
 Este archivo sirve para comparar ejecuciones antes y despues de cambios en el matcher.
 
+El primer indexado y las cargas posteriores del indice generan un resumen separado:
+
+```text
+datos/indexado_rendimiento_YYYYMMDD_HHMMSS.log
+```
+
+Ese log registra modo (`indexado_completo` o `cache_json`), workers, archivos encontrados, entradas con tags, errores de metadata, tiempos de escaneo, extraccion con `mutagen`, escritura JSON, escritura SQLite, generacion de alias, tamano de indices y archivos por segundo.
+
+Ademas, la GUI crea una traza persistente por sesion:
+
+```text
+datos/app_trace_YYYYMMDD_HHMMSS.log
+```
+
+Esa traza conserva lo que aparece en la pestana `Logs`, incluyendo previsualizacion, carga de biblioteca, indexado y analisis por playlist.
+
 ---
 
 ## 6) Estado de la UI y problemas corregidos o atacados

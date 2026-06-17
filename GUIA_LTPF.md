@@ -616,6 +616,37 @@ Cada resumen queda guardado en:
 datos/analisis_rendimiento_YYYYMMDD_HHMMSS.log
 ```
 
+El indexador genera un resumen independiente:
+
+```text
+datos/indexado_rendimiento_YYYYMMDD_HHMMSS.log
+```
+
+Ese fichero mide:
+
+- si el indice se cargo desde JSON o se genero desde cero;
+- tiempo de carga de JSON existente;
+- tiempo de escaneo de carpetas;
+- tiempo de extraccion de metadata con `mutagen`;
+- workers usados;
+- archivos encontrados;
+- entradas con tags validos, sin tags, con bitrate y con duracion;
+- errores de metadata;
+- tiempo de preparacion de SQLite en memoria;
+- tiempo de escritura del JSON;
+- tiempo de escritura de SQLite;
+- tiempo de generacion de sugerencias de alias;
+- tamano final de JSON y SQLite;
+- archivos por segundo.
+
+La GUI tambien guarda una traza completa por sesion:
+
+```text
+datos/app_trace_YYYYMMDD_HHMMSS.log
+```
+
+Esa traza conserva los mensajes que se ven en la pestana `Logs`: previsualizacion, carga de biblioteca, indexado, analisis, lectura de salida, seleccion manual y errores.
+
 Para comprobar si una optimizacion ayuda, compara dos logs y mira especialmente:
 
 - si sube el porcentaje de `Evitaron escaneo completo`;
@@ -623,6 +654,15 @@ Para comprobar si una optimizacion ayuda, compara dos logs y mira especialmente:
 - si baja `p95`;
 - si baja el total de `tags_scan` y `nombre_scan`;
 - si aumenta `cache_calidad` sin aumentar errores manuales.
+
+Para comparar mejoras de primer indexado, compara `indexado_rendimiento_*.log` y mira especialmente:
+
+- `extraer metadata`;
+- `guardar JSON`;
+- `guardar SQLite`;
+- `generar alias`;
+- `metadata archivos/s`;
+- `total archivos/s`.
 
 ---
 
