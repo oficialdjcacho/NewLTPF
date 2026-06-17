@@ -1,5 +1,8 @@
 # alias_suggester.py
-# Logica para sugerir alias de artista a partir del indice de audio.
+# Lógica para sugerir alias de artista a partir del índice de audio.
+# - Trabaja 100% en RAM.
+# - No escribe nada hasta que se llame a save_suggestions() o apply_selected().
+# - Integración pensada con GUI (checkboxes) antes de aplicar definitivamente.
 
 import os
 import json
@@ -9,6 +12,10 @@ import re
 from collections import defaultdict, Counter
 from typing import List, Dict, Tuple, Optional
 
+
+# -------------------------------
+# Normalización y helpers
+# -------------------------------
 _STOP_TOKENS = {
     "the", "and", "y", "con", "&", "+", "feat", "ft", "featuring", "vs"
 }
@@ -47,8 +54,7 @@ def _tokens_jaccard(a: str, b: str) -> float:
 def _is_diminutive(a: str, b: str) -> bool:
     a = a.split()[0] if a else ""
     b = b.split()[0] if b else ""
-    if not a or not b:
-        return False
+    if not a or not b: return False
     pair = (a, b)
     pair_rev = (b, a)
     if pair in _DIMINUTIVOS or pair_rev in _DIMINUTIVOS:
@@ -59,6 +65,10 @@ def _is_diminutive(a: str, b: str) -> bool:
         return True
     return False
 
+
+# -------------------------------
+# Sugeridor de alias
+# -------------------------------
 class ArtistAliasSuggester:
     def __init__(self) -> None:
         self._signature_variants: Dict[str, Counter] = defaultdict(Counter)
@@ -122,10 +132,10 @@ class ArtistAliasSuggester:
             reasons.append("tokens muy similares")
 
         if _strip_accents(a_norm) == _strip_accents(b_norm) and a_norm != b_norm:
-            reasons.append("diferencia solo por tildes/diacriticos")
+            reasons.append("diferencia sólo por tildes/diacríticos")
 
         if _is_diminutive(a_norm, b_norm):
-            reasons.append("diminutivo / variante comun")
+            reasons.append("diminutivo / variante común")
 
         cooc = False
         titles_a = set(self._variant_titles.get(a_norm, {}))
@@ -136,14 +146,14 @@ class ArtistAliasSuggester:
                     cooc = True
                     break
         if cooc:
-            reasons.append("coocurrencia en titulos/duraciones")
+            reasons.append("coocurrencia en títulos/duraciones")
 
         score = 0.0
         score += min(0.6, ratio * 0.6)
         score += min(0.3, jacc * 0.3)
-        if "diminutivo / variante comun" in reasons:
+        if "diminutivo / variante común" in reasons:
             score += 0.07
-        if "diferencia solo por tildes/diacriticos" in reasons:
+        if "diferencia sólo por tildes/diacríticos" in reasons:
             score += 0.05
         if cooc:
             score += 0.08
@@ -185,6 +195,9 @@ class ArtistAliasSuggester:
         with open(path_json, "w", encoding="utf-8") as f:
             json.dump(suggestions, f, ensure_ascii=False, indent=2)
 
+    # -------------------------------
+    # Aplicación con confirmación (GUI)
+    # -------------------------------
     @staticmethod
     def _load_aliasconfig(path_cfg: str) -> dict:
         if not os.path.exists(path_cfg):
@@ -244,6 +257,10 @@ class ArtistAliasSuggester:
         with open(path_cfg, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
 
+
+# -------------------------------
+# Utilidad extra: podar sugerencias ya aplicadas
+# -------------------------------
 def prune_applied_suggestions(path_json: str, accepted_pairs: List[Tuple[str, str]]) -> None:
     try:
         with open(path_json, "r", encoding="utf-8") as f:

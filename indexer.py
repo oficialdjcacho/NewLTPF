@@ -8,6 +8,7 @@ from mutagen import File
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 
+# NUEVO: sugeridor de alias desacoplado
 import alias_suggester
 
 logging.basicConfig(level=logging.INFO)
@@ -30,6 +31,7 @@ def extraer_tags(ruta):
         artista = archivo.get('artist', [None])[0]
         auto_tags = False
 
+        # Caso 1: Sin tags
         if not archivo.tags or (not titulo and not artista):
             auto_tags = True
             nombre_archivo = os.path.splitext(os.path.basename(ruta))[0]
@@ -45,12 +47,14 @@ def extraer_tags(ruta):
                 artista = None
                 titulo = nombre_archivo.strip()
 
+        # Caso 2: Tag parcial → título incluye artista
         elif artista is None and titulo and ' - ' in titulo:
             auto_tags = True
             partes = titulo.split(' - ', 1)
             posible_artista = partes[0].strip()
             posible_titulo = partes[1].strip()
 
+            # Validar que no hay duplicación en el título
             if posible_titulo.lower().startswith(posible_artista.lower()):
                 posible_titulo = posible_titulo[len(posible_artista):].lstrip("-: ").strip()
 
@@ -112,12 +116,12 @@ def cargar_indice(carpeta, progreso_callback=None, estado_callback=None):
 
     if os.path.exists(ruta_indice):
         with open(ruta_indice, 'r', encoding='utf-8') as f:
-            logging.info(f"Indice cargado desde: {ruta_indice}")
+            logging.info(f"Índice cargado desde: {ruta_indice}")
             if estado_callback:
-                estado_callback("Indice cargado")
+                estado_callback("Índice cargado")
             return json.load(f)
 
-    logging.info(f"No se encontro indice. Iniciando indexacion en: {carpeta}")
+    logging.info(f"No se encontró índice. Iniciando indexación en: {carpeta}")
     if estado_callback:
         estado_callback("Indexando archivos...")
 
@@ -150,18 +154,21 @@ def cargar_indice(carpeta, progreso_callback=None, estado_callback=None):
                     int(resultado["tags"].get("auto_tags", False))
                 ))
 
+    # Insertar en SQLite en memoria
     cursor.executemany("""
         INSERT OR REPLACE INTO indice_audio (path, title, artist, duration, bitrate, auto_tags)
         VALUES (?, ?, ?, ?, ?, ?)
     """, insert_values)
     conn_mem.commit()
 
+    # Guardar JSON en disco
     with open(ruta_indice, 'w', encoding='utf-8') as f:
         json.dump(index, f, ensure_ascii=False, indent=2)
-        logging.info(f"Indice guardado en: {ruta_indice}")
+        logging.info(f"Índice guardado en: {ruta_indice}")
         if estado_callback:
-            estado_callback("Indice guardado")
+            estado_callback("Índice guardado")
 
+    # Guardar base de datos desde memoria a disco
     try:
         conn_disco = sqlite3.connect(ruta_bd)
         conn_mem.backup(conn_disco)
@@ -171,6 +178,9 @@ def cargar_indice(carpeta, progreso_callback=None, estado_callback=None):
     except Exception as e:
         logging.warning(f"Error al guardar la base de datos desde memoria: {e}")
 
+    # ============================================================
+    # NUEVO: generar sugerencias de alias (RAM → JSON)
+    # ============================================================
     try:
         sugg = alias_suggester.ArtistAliasSuggester()
         for item in index:
@@ -178,15 +188,15 @@ def cargar_indice(carpeta, progreso_callback=None, estado_callback=None):
             if not tags:
                 continue
             artista = tags.get("artist")
-            titulo = tags.get("title")
-            dur = tags.get("duration")
+            titulo  = tags.get("title")
+            dur     = tags.get("duration")
             if artista:
                 sugg.add(artista, titulo, dur, item.get("path") or "")
 
         suggestions = sugg.build_suggestions()
         ruta_sug = os.path.join(carpeta_datos, "alias_suggestions.json")
         sugg.save_suggestions(ruta_sug, suggestions)
-        logging.info(f"Sugerencias de alias generadas: {len(suggestions)} -> {ruta_sug}")
+        logging.info(f"Sugerencias de alias generadas: {len(suggestions)} → {ruta_sug}")
         if estado_callback:
             estado_callback("Sugerencias de alias generadas (revisar en GUI)")
     except Exception as e:
