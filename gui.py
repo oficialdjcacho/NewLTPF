@@ -1277,11 +1277,6 @@ class PlaylistUpdaterApp:
         self._ui(self._update_playlist_tree)
         self._ui(self.progress.configure, value=0)
         self._ui(self.current_progress_text.set, "0%")
-        try:
-            self._load_library_index()
-        except Exception as exc:
-            self._trace("preview_library_index_unavailable", error=exc)
-        library_lookup = dict(self._library_lookup)
         total = len(playlists)
         for index, playlist in enumerate(playlists, start=1):
             if self._preview_stop:
@@ -1307,8 +1302,8 @@ class PlaylistUpdaterApp:
                         original_path=item.get("ruta") or "",
                         tags=item.get("tags") or {},
                         route_valid=os.path.exists(item.get("ruta") or ""),
-                        bitrate=self._bitrate_for_path(item.get("ruta") or "", lookup=library_lookup),
-                        status="ruta inválida" if not os.path.exists(item.get("ruta") or "") else "previsualizada",
+                        bitrate=0,
+                        status="ruta inválida" if not os.path.exists(item.get("ruta") or "") else "pendiente",
                     )
                     for i, item in enumerate(raw_entries)
                 ]
@@ -1347,6 +1342,43 @@ class PlaylistUpdaterApp:
         self._preview_running = False
         self._ui(self._set_status, "Previsualización cargada.")
         self._trace("preview_end", playlists=len(playlists), elapsed=f"{time.perf_counter() - started:.2f}s")
+
+        threading.Thread(target=self._preview_bitrate_worker, args=(list(self._playlist_order),), daemon=True).start()
+
+    def _preview_bitrate_worker(self, playlists: list[str]):
+        if not playlists or self._analysis_running:
+            return
+        started = time.perf_counter()
+        self._trace("preview_bitrate_begin", playlists=len(playlists))
+        try:
+            self._ui(self._set_status, "Calculando bitrates de previsualizacion en segundo plano...")
+            self._load_library_index()
+            library_lookup = dict(self._library_lookup)
+        except Exception as exc:
+            self._trace("preview_bitrate_index_unavailable", error=exc)
+            return
+
+        for playlist in playlists:
+            if self._preview_stop or self._analysis_running:
+                break
+            record = self._playlist_records.get(playlist)
+            if not record:
+                continue
+            overrides: dict[str, int] = {}
+            for entry in record.entries:
+                if not entry.original_path:
+                    continue
+                bitrate = self._bitrate_for_path(entry.original_path, lookup=library_lookup)
+                entry.bitrate = bitrate
+                overrides[os.path.normpath(entry.original_path)] = int(bitrate or 0)
+            self._preview_bitrate_overrides[playlist] = overrides
+            if playlist == self._selected_playlist_path:
+                self._ui(self._populate_entries, record, False)
+            self._ui(self._sync_playlist_tree_item, playlist)
+
+        self._trace("preview_bitrate_end", playlists=len(playlists), elapsed=f"{time.perf_counter() - started:.2f}s")
+        if not self._analysis_running:
+            self._ui(self._set_status, "Bitrates de previsualizacion actualizados.")
 
     def run_update(self):
         if self._analysis_running:
