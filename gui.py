@@ -771,6 +771,19 @@ class PlaylistUpdaterApp:
         except Exception:
             return []
 
+    def _entry_record_from_playlist_item(self, index: int, item: dict) -> EntryRecord:
+        original_path = item.get("ruta") or ""
+        route_valid = os.path.exists(original_path)
+        return EntryRecord(
+            index=index,
+            original_path=original_path,
+            tags=item.get("tags") or {},
+            route_valid=route_valid,
+            resolved_path=original_path if route_valid else "",
+            status="ruta valida" if route_valid else "ruta inválida",
+            origin="original" if route_valid else "auto",
+        )
+
     def _write_output_playlist(self, record: PlaylistRecord):
         record.output_path = self._output_path_for_playlist(record.path)
         try:
@@ -788,7 +801,7 @@ class PlaylistUpdaterApp:
 
     def _refresh_record_counts(self, record: PlaylistRecord):
         record.total = len(record.entries)
-        record.found = sum(1 for e in record.entries if e.status == "encontrada")
+        record.found = sum(1 for e in record.entries if e.status in {"encontrada", "ruta valida"})
         record.manual = sum(1 for e in record.entries if e.status == "manual")
         record.missing = sum(1 for e in record.entries if e.status == "no encontrada")
         record.invalid = sum(1 for e in record.entries if e.status == "ruta inválida")
@@ -1297,18 +1310,14 @@ class PlaylistUpdaterApp:
             try:
                 raw_entries, meta_map = _parse_m3u_with_meta(playlist)
                 record.entries = [
-                    EntryRecord(
-                        index=i,
-                        original_path=item.get("ruta") or "",
-                        tags=item.get("tags") or {},
-                        route_valid=os.path.exists(item.get("ruta") or ""),
-                        bitrate=0,
-                        status="ruta inválida" if not os.path.exists(item.get("ruta") or "") else "pendiente",
-                    )
+                    self._entry_record_from_playlist_item(i, item)
                     for i, item in enumerate(raw_entries)
                 ]
                 record.total = len(record.entries)
+                record.found = sum(1 for e in record.entries if e.status == "ruta valida")
                 record.invalid = sum(1 for e in record.entries if e.status == "ruta inválida")
+                done = record.found + record.invalid
+                record.progress = int((done / record.total) * 100) if record.total else 0
                 record.state = "previsualizada"
                 record.output_path = self._output_path_for_playlist(playlist)
                 self._preview_bitrate_overrides[playlist] = {
@@ -1442,16 +1451,11 @@ class PlaylistUpdaterApp:
                 raw_entries, meta_map = _parse_m3u_with_meta(playlist)
                 self._trace("playlist_parsed", playlist=playlist, entries=len(raw_entries), meta_entries=len(meta_map), elapsed=f"{time.perf_counter() - parse_started:.2f}s")
                 record.entries = [
-                    EntryRecord(
-                        index=i,
-                        original_path=item.get("ruta") or "",
-                        tags=item.get("tags") or {},
-                        route_valid=os.path.exists(item.get("ruta") or ""),
-                        status="ruta inválida" if not os.path.exists(item.get("ruta") or "") else "pendiente",
-                    )
+                    self._entry_record_from_playlist_item(i, item)
                     for i, item in enumerate(raw_entries)
                 ]
                 record.total = len(record.entries)
+                record.found = sum(1 for e in record.entries if e.status == "ruta valida")
                 record.invalid = sum(1 for e in record.entries if e.status == "ruta inválida")
                 self._trace("playlist_records_ready", playlist=playlist, total=record.total, invalid=record.invalid)
                 self._playlist_records[playlist] = record
