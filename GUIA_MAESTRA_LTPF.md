@@ -246,7 +246,26 @@ La construcción es perezosa y limitada al bloque de cada worker:
 
 Esto mantiene la precisión y evita pagar el coste fijo de preparar un índice auxiliar completo para todos los workers.
 
-### 5.10 Resumen de rendimiento por analisis
+### 5.10 Índice incremental y tokens persistentes
+
+El indexador adopta una estrategia inspirada en Everything:
+
+- guarda `path + size + mtime`;
+- reutiliza entradas sin cambios;
+- lee con `mutagen` solo archivos nuevos o modificados;
+- elimina entradas desaparecidas;
+- sale rápido si no hay cambios y SQLite ya tiene tokens.
+
+La SQLite incluye:
+
+- `indice_audio`: metadata principal de pistas;
+- `track_tokens`: tokens persistentes enlazados por `track_id` entero.
+
+El matcher consulta `track_tokens` antes de construir candidatos en memoria. Si la tabla no existe o no devuelve candidatos, conserva el fallback anterior.
+
+La generación de alias queda fuera del flujo normal de GUI/análisis (`generar_alias=False`) para evitar bloquear el primer uso.
+
+### 5.11 Resumen de rendimiento por analisis
 
 Se anadio instrumentacion agregada para comparar mejoras de rendimiento.
 
@@ -302,6 +321,14 @@ datos/app_trace_YYYYMMDD_HHMMSS.log
 ```
 
 Esa traza conserva lo que aparece en la pestana `Logs`, incluyendo previsualizacion, carga de biblioteca, indexado y analisis por playlist.
+
+Resultado de referencia posterior a las fases incremental/tokens:
+
+- análisis playlist 105 entradas: `31.87 s`;
+- encontradas: `105/105`;
+- escaneo completo: `0`;
+- indexado incremental sin cambios: `5.66 s`;
+- SQLite con tokens: `83.96 MB`.
 
 ---
 

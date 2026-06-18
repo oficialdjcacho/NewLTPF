@@ -172,6 +172,22 @@ Cuando una entrada no se resuelve por ruta, cache manual, cache global o cache d
 
 Ese indice se construye de forma perezosa por worker y solo con los tokens del bloque que realmente lo necesita. Si no hay tokens utiles, el matcher cae al escaneo completo anterior para conservar compatibilidad.
 
+### Indexado incremental
+
+El indice de biblioteca guarda una firma ligera por archivo:
+
+```text
+path + size + mtime
+```
+
+En reindexados posteriores reutiliza los tags de archivos sin cambios y lee con `mutagen` solo los archivos nuevos o modificados. Tambien elimina del indice los archivos que ya no aparezcan en la biblioteca.
+
+El flujo normal de analisis y GUI omite la generacion de sugerencias de alias durante la carga del indice para no bloquear el primer uso. El indexador conserva la capacidad de generar alias cuando se invoque explicitamente con `generar_alias=True`.
+
+### Tokens persistentes
+
+El SQLite de datos incluye una tabla `track_tokens` con tokens de titulo, artista y nombre de archivo. Los tokens se enlazan mediante un identificador entero de pista para no duplicar rutas completas. El matcher consulta esa tabla antes de construir candidatos en memoria.
+
 ### Logs de rendimiento
 
 Cada analisis genera un resumen de rendimiento con:
@@ -209,6 +225,15 @@ datos/app_trace_YYYYMMDD_HHMMSS.log
 
 Sirve para revisar el flujo completo: previsualizacion, carga de indice, analisis por playlist, mensajes del indexador y tiempos de las operaciones de UI.
 
+Resultado de referencia tras estas optimizaciones con la playlist de prueba de 105 entradas:
+
+```text
+Tiempo analisis: 31.87 s
+Encontradas: 105/105
+Escaneo completo: 0
+Indexado incremental sin cambios: 5.66 s
+```
+
 ---
 
 ## Documentación útil
@@ -217,6 +242,7 @@ Sirve para revisar el flujo completo: previsualizacion, carga de indice, analisi
 - `GUIA_LTPF.md`: referencia técnica del proyecto.
 - `GUIA_NUEVA_VERSION.md`: diseño y estado de la nueva UI.
 - `RESUMEN_CAMBIOS_Y_PLAN.md`: resumen de cambios y plan de rendimiento.
+- `PLAN_OPTIMIZACION_EVERYTHING_MP3TAG.md`: fases aplicadas y futuras ideas opcionales inspiradas en Everything y Mp3tag.
 
 ---
 

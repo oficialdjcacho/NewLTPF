@@ -542,6 +542,42 @@ def _candidate_subset_from_tokens(candidate_cache, groups):
                 selected.append(item)
     return selected
 
+def _candidate_subset_from_sqlite(mem_conn, path_lookup, groups):
+    if mem_conn is None or not path_lookup:
+        return []
+    selected = []
+    seen_paths = set()
+    try:
+        cur = mem_conn.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='track_tokens'")
+        if cur.fetchone() is None:
+            return []
+        for token_type, token_values in groups:
+            uniq_tokens = sorted({t for t in (token_values or []) if t})
+            if not uniq_tokens:
+                continue
+            placeholders = ",".join("?" for _ in uniq_tokens)
+            cur.execute(
+                f"""
+                SELECT DISTINCT ia.path
+                FROM track_tokens tt
+                JOIN indice_audio ia ON ia.id = tt.track_id
+                WHERE tt.token_type = ? AND tt.token IN ({placeholders})
+                """,
+                [token_type] + uniq_tokens,
+            )
+            for (path,) in cur.fetchall():
+                norm = os.path.normpath(path or "")
+                if not norm or norm in seen_paths:
+                    continue
+                item = path_lookup.get(norm)
+                if item:
+                    seen_paths.add(norm)
+                    selected.append(item)
+    except Exception:
+        return []
+    return selected
+
 def _entry_perf_label(entrada):
     tags = (entrada or {}).get("tags") or {}
     artist = tags.get("artist") or ""
@@ -965,10 +1001,13 @@ def procesar_bloque_con_orden(
 
         # -------- Fase 2: Por tags ----------
         if tags:
-            tag_candidates = _candidate_subset_from_tokens(_get_candidate_cache(), [
+            tag_groups = [
                 ("title", tokens(_titulo_puro(tags) or tags.get("title") or "")),
                 ("artist", tokens(_artista_con_fallback(tags))),
-            ])
+            ]
+            tag_candidates = _candidate_subset_from_sqlite(mem_conn, path_lookup, tag_groups)
+            if not tag_candidates:
+                tag_candidates = _candidate_subset_from_tokens(_get_candidate_cache(), tag_groups)
             if not tag_candidates:
                 tag_candidates = indice_sqlite
             scan_candidate_count = len(tag_candidates)
@@ -1084,10 +1123,13 @@ def procesar_bloque_con_orden(
 
             nombre_archivo = os.path.basename(ruta)
             mejor_puntaje, candidatos = 0, []
-            name_candidates = _candidate_subset_from_tokens(_get_candidate_cache(), [
+            name_groups = [
                 ("name", tokens(nombre_archivo)),
                 ("title", tokens(nombre_archivo)),
-            ])
+            ]
+            name_candidates = _candidate_subset_from_sqlite(mem_conn, path_lookup, name_groups)
+            if not name_candidates:
+                name_candidates = _candidate_subset_from_tokens(_get_candidate_cache(), name_groups)
             if not name_candidates:
                 name_candidates = indice_sqlite
             scan_candidate_count = len(name_candidates)

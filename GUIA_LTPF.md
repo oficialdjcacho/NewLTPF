@@ -239,21 +239,27 @@ Funciones:
 
 - `extraer_tags(ruta)`: lee metadatos con `mutagen` y extrae `title`, `artist`, `duration`, `bitrate` y `auto_tags`.
 - `generar_hash_carpeta(carpeta)`: calcula un hash del path de la carpeta para nombrar el índice.
-- `inicializar_bd_memoria()`: crea una SQLite en memoria con la tabla `indice_audio`.
-- `procesar_archivo(args)`: procesa un archivo concreto y devuelve `{"path", "tags"}`.
-- `cargar_indice(carpeta, progreso_callback=None, estado_callback=None)`: carga un índice existente o indexa la carpeta desde cero.
+- `ruta_indice_json(carpeta, carpeta_datos=None)`: devuelve la ruta esperada del índice JSON.
+- `indice_json_existe(carpeta, carpeta_datos=None)`: permite saber si existe cache antes de lanzar tareas pesadas.
+- `inicializar_bd_memoria()`: crea una SQLite en memoria con `indice_audio` y `track_tokens`.
+- `procesar_archivo(ruta)`: procesa un archivo concreto y devuelve `{"path", "tags", "stat"}`.
+- `cargar_indice(carpeta, progreso_callback=None, estado_callback=None, generar_alias=True)`: carga, actualiza o crea el índice.
 
 Flujo de `cargar_indice`:
 
 1. calcula `datos/mp3_index_<hash>.json`;
-2. si existe, lo carga;
-3. si no existe, recorre la carpeta;
-4. filtra extensiones de audio/vídeo soportadas;
-5. procesa archivos con `ThreadPoolExecutor`;
-6. construye la lista de entradas y la tabla SQLite;
-7. guarda el JSON;
-8. vuelca la BD SQLite a `datos/coincidencias.db`;
-9. genera sugerencias de alias.
+2. carga el JSON existente si lo hay;
+3. recorre la carpeta y calcula `path + size + mtime`;
+4. reutiliza entradas sin cambios;
+5. lee con `mutagen` solo archivos nuevos o modificados;
+6. elimina del índice entradas que ya no aparecen;
+7. construye `indice_audio`;
+8. construye `track_tokens` con tokens de título, artista y nombre;
+9. guarda el JSON compacto;
+10. vuelca la BD SQLite a `datos/coincidencias.db`;
+11. genera sugerencias de alias solo si `generar_alias=True`.
+
+En el flujo normal de GUI/analisis se usa `generar_alias=False` para que la carga del índice no pague el coste de alias. Las sugerencias pueden generarse aparte cuando interese.
 
 ### `alias_suggester.py`
 
@@ -650,14 +656,19 @@ Ese fichero mide:
 - tiempo de extraccion de metadata con `mutagen`;
 - workers usados;
 - archivos encontrados;
+- entradas reutilizadas sin leer tags;
+- entradas nuevas o modificadas;
+- entradas eliminadas del índice;
 - entradas con tags validos, sin tags, con bitrate y con duracion;
 - errores de metadata;
+- tokens guardados en SQLite;
 - tiempo de preparacion de SQLite en memoria;
 - tiempo de escritura del JSON;
 - tiempo de escritura de SQLite;
 - tiempo de generacion de sugerencias de alias;
 - tamano final de JSON y SQLite;
 - archivos por segundo.
+- top de archivos más lentos leyendo metadata.
 
 La GUI tambien guarda una traza completa por sesion:
 

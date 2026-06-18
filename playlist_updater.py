@@ -332,7 +332,8 @@ def update_playlist_logic(carpeta_musica: str, archivo_playlist: str,
     indice = cargar_indice(
         carpeta_musica,
         progreso_callback=progreso_callback,
-        estado_callback=estado_callback
+        estado_callback=estado_callback,
+        generar_alias=False
     )
     logging.info(f"Índice cargado desde: {indice.get('fuente', 'desconocida')}" if isinstance(indice, dict) else "Índice cargado")
 

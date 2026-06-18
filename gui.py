@@ -701,7 +701,7 @@ class PlaylistUpdaterApp:
                     started = time.perf_counter()
                     self._set_status("Cargando índice de biblioteca…")
                     self._trace("library_index_begin", folder=folder)
-                    self._library_index = cargar_indice(folder, progreso_callback=None, estado_callback=self._log)
+                    self._library_index = cargar_indice(folder, progreso_callback=None, estado_callback=self._log, generar_alias=False)
                     self._library_lookup = {}
                     for item in self._library_index or []:
                         path = os.path.normpath(item.get("path") or "")

@@ -128,6 +128,46 @@ datos/app_trace_YYYYMMDD_HHMMSS.log
   - etiqueta de entrada;
   - resultado elegido.
 
+### 1.11 Índice incremental estilo Everything
+
+- El índice guarda `path + size + mtime`.
+- En reindexados reutiliza entradas sin cambios.
+- Solo lee metadata con `mutagen` en archivos nuevos o modificados.
+- Elimina entradas que ya no aparecen en la biblioteca.
+- Si no hay cambios y SQLite ya tiene tokens, sale sin reescribir JSON ni SQLite.
+- El log de indexado muestra reutilizadas, nuevas/modificadas y eliminadas.
+
+### 1.12 Tokens persistentes en SQLite
+
+- Se añadió `track_tokens`.
+- Guarda tokens de:
+  - título;
+  - artista;
+  - nombre de archivo.
+- Usa `track_id` entero para no repetir rutas completas.
+- El matcher consulta `track_tokens` antes de crear candidatos en memoria.
+- Si no hay tabla o candidatos, mantiene el fallback anterior.
+
+### 1.13 Alias fuera del flujo normal
+
+- La GUI y el análisis llaman a `cargar_indice(..., generar_alias=False)`.
+- Esto evita pagar el coste de alias durante carga/análisis normal.
+- El indexador conserva `generar_alias=True` para usos explícitos.
+
+### 1.14 Tests de referencia
+
+- `compileall`: correcto.
+- imports principales: correctos.
+- indexado incremental sin cambios:
+  - `5.66 s`;
+  - `127730` entradas reutilizadas;
+  - `0` archivos releídos;
+  - SQLite con tokens: `83.96 MB`.
+- análisis playlist de referencia:
+  - `105/105` encontradas;
+  - `31.87 s`;
+  - `0` escaneos completos.
+
 ---
 
 ## 2) Estado actual de la arquitectura
