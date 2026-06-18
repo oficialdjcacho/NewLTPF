@@ -24,7 +24,7 @@ except Exception:
     vlc = None
 
 from playlist_updater import _format_extvdj_line, _parse_m3u_with_meta, update_playlist_logic
-from indexer import cargar_indice
+from indexer import cargar_indice, indice_json_existe
 from matcher import (
     _artista_con_fallback,
     _es_remix,
@@ -1368,6 +1368,11 @@ class PlaylistUpdaterApp:
         started = time.perf_counter()
         self._trace("preview_bitrate_begin", playlists=len(playlists))
         try:
+            folder = self.folder_path.get().strip()
+            if self._library_index is None and not indice_json_existe(folder):
+                self._trace("preview_bitrate_deferred_no_index", folder=folder)
+                self._ui(self._set_status, "Bitrates pendientes: el índice de biblioteca aún no existe.")
+                return
             self._ui(self._set_status, "Calculando bitrates de previsualizacion en segundo plano...")
             self._load_library_index()
             library_lookup = dict(self._library_lookup)

@@ -145,6 +145,15 @@ def generar_hash_carpeta(carpeta):
     return hashlib.md5(carpeta.encode()).hexdigest()
 
 
+def ruta_indice_json(carpeta, carpeta_datos=None):
+    carpeta_datos = carpeta_datos or os.path.join(".", "datos")
+    return os.path.join(carpeta_datos, f"mp3_index_{generar_hash_carpeta(carpeta)}.json")
+
+
+def indice_json_existe(carpeta, carpeta_datos=None):
+    return os.path.exists(ruta_indice_json(carpeta, carpeta_datos=carpeta_datos))
+
+
 def inicializar_bd_memoria():
     conn = sqlite3.connect(":memory:")
     cursor = conn.cursor()
@@ -245,8 +254,7 @@ def cargar_indice(carpeta, progreso_callback=None, estado_callback=None):
     started_total = time.perf_counter()
     carpeta_datos = os.path.join(".", "datos")
     os.makedirs(carpeta_datos, exist_ok=True)
-    hash_nombre = generar_hash_carpeta(carpeta)
-    ruta_indice = os.path.join(carpeta_datos, f"mp3_index_{hash_nombre}.json")
+    ruta_indice = ruta_indice_json(carpeta, carpeta_datos=carpeta_datos)
     ruta_bd = os.path.join(carpeta_datos, "coincidencias.db")
 
     stats = {

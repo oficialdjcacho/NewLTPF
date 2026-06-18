@@ -504,6 +504,66 @@ def _best_quality_from_cache(quality_cache, base_tags, prefer_no_auto=True, tole
                 return item
     return None
 
+def _add_token_refs(target, token_values, item, wanted_tokens=None):
+    seen = set()
+    for tok in token_values or []:
+        if not tok or tok in seen:
+            continue
+        if wanted_tokens is not None and tok not in wanted_tokens:
+            continue
+        seen.add(tok)
+        target.setdefault(tok, []).append(item)
+
+def _build_candidate_cache(indice_sqlite, wanted_tokens=None):
+    title = {}
+    artist = {}
+    name = {}
+    for item in indice_sqlite or []:
+        tags = item.get("tags") or {}
+        path = item.get("path") or ""
+        _add_token_refs(title, tokens(_titulo_puro(tags) or tags.get("title") or ""), item, wanted_tokens=wanted_tokens)
+        _add_token_refs(artist, tokens(normalizar_artista(tags.get("artist") or "")), item, wanted_tokens=wanted_tokens)
+        _add_token_refs(name, tokens(os.path.splitext(os.path.basename(path))[0]), item, wanted_tokens=wanted_tokens)
+    return {"title": title, "artist": artist, "name": name, "all": indice_sqlite or []}
+
+def _candidate_subset_from_tokens(candidate_cache, groups):
+    if not candidate_cache:
+        return candidate_cache.get("all") if candidate_cache else []
+    selected = []
+    seen_paths = set()
+    for group_name, token_values in groups:
+        group = candidate_cache.get(group_name) or {}
+        for tok in token_values or []:
+            for item in group.get(tok, []):
+                path = item.get("path") or id(item)
+                if path in seen_paths:
+                    continue
+                seen_paths.add(path)
+                selected.append(item)
+    return selected
+
+def _entry_perf_label(entrada):
+    tags = (entrada or {}).get("tags") or {}
+    artist = tags.get("artist") or ""
+    title = tags.get("title") or ""
+    if artist or title:
+        return f"{artist} - {title}".strip(" -")
+    ruta = (entrada or {}).get("ruta") or ""
+    return os.path.basename(ruta) or ruta
+
+def _wanted_tokens_for_block(bloque):
+    wanted = set()
+    for entrada in bloque or []:
+        ruta = (entrada or {}).get("ruta") or ""
+        tags = (entrada or {}).get("tags") or {}
+        for tok in tokens(_titulo_puro(tags) or tags.get("title") or ""):
+            wanted.add(tok)
+        for tok in tokens(_artista_con_fallback(tags)):
+            wanted.add(tok)
+        for tok in tokens(os.path.basename(ruta)):
+            wanted.add(tok)
+    return wanted
+
 # =============================================================================
 # 🎯 Scoring por tags + igualdad estricta
 # =============================================================================
@@ -614,6 +674,8 @@ def procesar_bloque_con_orden(
     indice_sqlite = cargar_indice_desde_sqlite(mem_conn)
     quality_cache = _build_quality_caches(indice_sqlite)
     path_lookup = quality_cache.get("path", {})
+    candidate_cache = None
+    wanted_candidate_tokens = _wanted_tokens_for_block(bloque)
     bitrate_overrides = bitrate_overrides or {}
 
     # --- RAM: cache manual precargada UNA vez por proceso ---
@@ -622,6 +684,12 @@ def procesar_bloque_con_orden(
     # --- Caché local por worker (exacta y aprendida) ---
     local_cache_exact: dict[str, Tuple[str, int]] = {}
     local_cache_generic: dict[str, Tuple[str, int]] = {}
+
+    def _get_candidate_cache():
+        nonlocal candidate_cache
+        if candidate_cache is None:
+            candidate_cache = _build_candidate_cache(indice_sqlite, wanted_tokens=wanted_candidate_tokens)
+        return candidate_cache
 
     def _manual_lookup_cached(label: str) -> Optional[str]:
         for k in (
@@ -657,7 +725,7 @@ def procesar_bloque_con_orden(
                 return local_cache_generic[k][0], "local-aprendida"
         return None, None
 
-    def _record_stat(seq, phase, found, elapsed, full_scan=False):
+    def _record_stat(seq, phase, found, elapsed, full_scan=False, entrada=None, result_path="", candidate_count=None):
         if stats_list is None:
             return
         try:
@@ -668,6 +736,10 @@ def procesar_bloque_con_orden(
                 "elapsed": float(elapsed),
                 "full_scan": bool(full_scan),
                 "index_size": len(indice_sqlite),
+                "candidate_count": int(candidate_count if candidate_count is not None else len(indice_sqlite)),
+                "label": _entry_perf_label(entrada) if entrada else "",
+                "ruta": (entrada or {}).get("ruta", "") if entrada else "",
+                "result_path": result_path or "",
             })
         except Exception:
             pass
@@ -888,18 +960,30 @@ def procesar_bloque_con_orden(
         es_net_id = _es_netsearch_id(ruta)
         final_phase = "sin_coincidencia"
         full_scan_used = False
+        scan_candidate_count = len(indice_sqlite)
+        ruta_resultado_final = ""
 
         # -------- Fase 2: Por tags ----------
         if tags:
-            full_scan_used = True
-            for item in indice_sqlite:
+            tag_candidates = _candidate_subset_from_tokens(_get_candidate_cache(), [
+                ("title", tokens(_titulo_puro(tags) or tags.get("title") or "")),
+                ("artist", tokens(_artista_con_fallback(tags))),
+            ])
+            if not tag_candidates:
+                tag_candidates = indice_sqlite
+            scan_candidate_count = len(tag_candidates)
+            full_scan_used = scan_candidate_count >= len(indice_sqlite)
+            for item in tag_candidates:
                 puntaje = calcular_puntaje(tags, item.get("tags", {}))
                 if puntaje > mejor_puntaje:
                     mejor_puntaje, candidatos = puntaje, [item]
                 elif puntaje == mejor_puntaje:
                     candidatos.append(item)
 
-            log_lines.append(f"     🔎 Mejor puntaje (tags): {mejor_puntaje:.2f} con {len(candidatos)} coincidencias")
+            log_lines.append(
+                f"     🔎 Mejor puntaje (tags): {mejor_puntaje:.2f} con {len(candidatos)} coincidencias "
+                f"(candidatos evaluados={scan_candidate_count}/{len(indice_sqlite)})"
+            )
 
             # Si es Tidal/netsearch, toleramos un poco más: intentamos “título suave”
             if es_net_id and (mejor_puntaje < 50 or not candidatos):
@@ -973,6 +1057,7 @@ def procesar_bloque_con_orden(
                     ruta_sel = mejor["path"]
                     bsel = mejor["tags"].get("bitrate", 0) or 0
                     bloque_resultados.append(ruta_sel)
+                    ruta_resultado_final = ruta_sel
 
                     # caché local + acumulador global
                     _local_update(entrada, ruta_sel, bsel)
@@ -999,8 +1084,15 @@ def procesar_bloque_con_orden(
 
             nombre_archivo = os.path.basename(ruta)
             mejor_puntaje, candidatos = 0, []
-            full_scan_used = True
-            for item in indice_sqlite:
+            name_candidates = _candidate_subset_from_tokens(_get_candidate_cache(), [
+                ("name", tokens(nombre_archivo)),
+                ("title", tokens(nombre_archivo)),
+            ])
+            if not name_candidates:
+                name_candidates = indice_sqlite
+            scan_candidate_count = len(name_candidates)
+            full_scan_used = scan_candidate_count >= len(indice_sqlite)
+            for item in name_candidates:
                 cand_name = os.path.basename(item["path"]) if item.get("path") else ""
                 puntaje = sim_nombre(nombre_archivo, cand_name)
                 if puntaje > mejor_puntaje:
@@ -1008,7 +1100,10 @@ def procesar_bloque_con_orden(
                 elif puntaje == mejor_puntaje:
                     candidatos.append(item)
 
-            log_lines.append(f"     🔎 Mejor puntaje (nombre): {mejor_puntaje:.2f} con {len(candidatos)} coincidencias")
+            log_lines.append(
+                f"     🔎 Mejor puntaje (nombre): {mejor_puntaje:.2f} con {len(candidatos)} coincidencias "
+                f"(candidatos evaluados={scan_candidate_count}/{len(indice_sqlite)})"
+            )
 
             if mejor_puntaje >= threshold and candidatos:
                 artist_in = _artista_con_fallback(tags or {})
@@ -1063,6 +1158,7 @@ def procesar_bloque_con_orden(
                     ruta_sel = mejor["path"]
                     bsel = mejor.get("tags", {}).get("bitrate", 0) or 0
                     bloque_resultados.append(ruta_sel)
+                    ruta_resultado_final = ruta_sel
 
                     # caché local + acumulador global
                     _local_update(entrada, ruta_sel, bsel)
@@ -1078,7 +1174,10 @@ def procesar_bloque_con_orden(
                 final_phase = "nombre_scan_sin_coincidencia"
 
         elapsed = time.perf_counter() - start_t
-        _record_stat(seq, final_phase, encontrado, elapsed, full_scan=full_scan_used)
+        _record_stat(
+            seq, final_phase, encontrado, elapsed, full_scan=full_scan_used,
+            entrada=entrada, result_path=ruta_resultado_final, candidate_count=scan_candidate_count
+        )
         log_lines.append(f"     🕒 Tiempo: {elapsed:.2f} s")
         log_queue.put({"seq": seq, "text": "\n".join(log_lines), "found": encontrado})
 
@@ -1164,6 +1263,18 @@ def _format_perf_summary(stats, wall_elapsed, total_entries):
         lines.append(
             f"  - {phase}: {count} entradas | total {total:.2f} s | media {(total / count if count else 0.0):.3f} s | p95 {_percentile(vals, 95):.3f} s | max {(max(vals) if vals else 0.0):.3f} s"
         )
+    slow = sorted(stats, key=lambda s: float(s.get("elapsed", 0.0) or 0.0), reverse=True)[:10]
+    if slow:
+        lines.extend(["", "Entradas mas lentas:"])
+        for item in slow:
+            label = item.get("label") or os.path.basename(item.get("ruta") or "") or "(sin etiqueta)"
+            result = os.path.basename(item.get("result_path") or "")
+            suffix = f" -> {result}" if result else ""
+            lines.append(
+                f"  - #{int(item.get('seq', 0) or 0)} | {item.get('phase') or 'desconocida'} | "
+                f"{float(item.get('elapsed', 0.0) or 0.0):.3f} s | "
+                f"candidatos {int(item.get('candidate_count', 0) or 0)}/{index_size} | {label}{suffix}"
+            )
     lines.append("===== FIN RESUMEN =====")
     return "\n".join(lines)
 

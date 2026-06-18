@@ -233,7 +233,20 @@ Esta cache no compara audio real. Tampoco elimina candidatos solo por tener un n
 
 Ademas se anadio un `path_lookup` interno para consultas rapidas de `path -> item`, evitando recorridos completos para obtener bitrate o validar existencia dentro del indice.
 
-### 5.9 Resumen de rendimiento por analisis
+### 5.9 Índice auxiliar de candidatos
+
+Para reducir el coste de `tags_scan` y `nombre_scan`, el matcher usa un índice auxiliar por tokens de título, artista y nombre de archivo.
+
+La construcción es perezosa y limitada al bloque de cada worker:
+
+- no se crea en bloques que se resuelven por ruta o caches;
+- se construye solo cuando una entrada necesita scan;
+- solo guarda referencias para tokens presentes en ese bloque;
+- si no encuentra candidatos por tokens, vuelve al escaneo completo anterior.
+
+Esto mantiene la precisión y evita pagar el coste fijo de preparar un índice auxiliar completo para todos los workers.
+
+### 5.10 Resumen de rendimiento por analisis
 
 Se anadio instrumentacion agregada para comparar mejoras de rendimiento.
 
@@ -250,6 +263,7 @@ Al terminar el matching, la app genera un resumen con:
 - cuantas entradas evitaron escaneo completo;
 - cuantas usaron escaneo completo;
 - desglose por fase.
+- entradas mas lentas con fase, tiempo, candidatos evaluados y resultado elegido.
 
 Fases actuales registradas:
 

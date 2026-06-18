@@ -536,15 +536,34 @@ Si una entrada trae tags claros, la fase `cache_calidad` puede resolverla direct
 
 La cache de calidad no analiza audio real. Usa metadatos y duracion, y solo descarta menor bitrate dentro de una identidad suficientemente compatible.
 
-### D. Tags reales
+### D. Índice auxiliar de candidatos
+
+Si una entrada no se resuelve por rutas o caches y llega a `tags_scan` o `nombre_scan`, el matcher reduce el conjunto de comparación con un índice auxiliar por tokens:
+
+- tokens de título;
+- tokens de artista;
+- tokens de nombre de archivo.
+
+La construcción es perezosa y limitada al bloque del worker:
+
+- no se crea al arrancar todos los workers;
+- se crea solo si alguna entrada del bloque necesita scan;
+- se limita a los tokens presentes en ese bloque;
+- evita almacenar referencias para tokens que no se van a consultar.
+
+Si no hay candidatos por tokens, el matcher vuelve al escaneo completo anterior para conservar precisión.
+
+El resumen de análisis muestra las entradas más lentas con fase, tiempo, candidatos evaluados, etiqueta de entrada y resultado elegido.
+
+### E. Tags reales
 
 Se comparan `artist`, `title`, `duration` y `bitrate`. Aquí el nombre del archivo no es la fuente principal.
 
-### E. Nombre de archivo
+### F. Nombre de archivo
 
 Se usa como respaldo cuando los tags no bastan o la pista llega con nombres poco fiables.
 
-### F. Refinamientos
+### G. Refinamientos
 
 Se aplican alias, preferencia por no-remix y filtros por artista esperado.
 
@@ -601,6 +620,7 @@ Campos importantes:
 - `Rendimiento`: entradas procesadas por segundo.
 - `Evitaron escaneo completo`: entradas resueltas por ruta valida o caches.
 - `Usaron escaneo completo`: entradas que tuvieron que recorrer la biblioteca por tags o nombre.
+- `Entradas mas lentas`: top de entradas con fase, tiempo, candidatos evaluados y resultado elegido.
 
 Fases utiles para comparar mejoras:
 

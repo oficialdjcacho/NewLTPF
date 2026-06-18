@@ -166,6 +166,12 @@ Esta cache agrupa pistas por identidad musical:
 
 Dentro de cada grupo conserva la pista con mayor bitrate. Esto permite resolver entradas con tags fiables sin recorrer toda la biblioteca. La cache no compara audio real y no descarta pistas solo por parecerse de nombre: exige que la identidad musical encaje.
 
+### Índice auxiliar de candidatos
+
+Cuando una entrada no se resuelve por ruta, cache manual, cache global o cache de calidad, el matcher ya no compara siempre contra toda la biblioteca. Antes de puntuar por `tags_scan` o `nombre_scan`, crea un indice auxiliar por tokens de titulo, artista y nombre de archivo.
+
+Ese indice se construye de forma perezosa por worker y solo con los tokens del bloque que realmente lo necesita. Si no hay tokens utiles, el matcher cae al escaneo completo anterior para conservar compatibilidad.
+
 ### Logs de rendimiento
 
 Cada analisis genera un resumen de rendimiento con:
@@ -179,6 +185,7 @@ Cada analisis genera un resumen de rendimiento con:
 - entradas por segundo;
 - porcentaje que evito escaneo completo;
 - desglose por fase (`ruta_valida`, `cache_manual`, `cache_global`, `cache_calidad`, `tags_scan`, `nombre_scan`, etc.).
+- entradas mas lentas, fase usada, candidatos evaluados y resultado elegido.
 
 El resumen tambien se guarda en:
 

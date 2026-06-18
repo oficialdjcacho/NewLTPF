@@ -115,6 +115,19 @@ datos/app_trace_YYYYMMDD_HHMMSS.log
 
 - El JSON de indice nuevo se guarda en formato compacto para reducir tamano y tiempo de escritura.
 
+### 1.10 Índice auxiliar perezoso para scans
+
+- `tags_scan` y `nombre_scan` usan un índice auxiliar por tokens para reducir candidatos antes de puntuar.
+- El índice auxiliar se construye solo si el bloque del worker llega a una fase de scan.
+- El índice auxiliar se limita a tokens presentes en ese bloque, en vez de construir un mapa global completo por worker.
+- Si no hay candidatos por tokens, el matcher vuelve al escaneo completo anterior.
+- El log de analisis lista las entradas mas lentas con:
+  - fase;
+  - tiempo;
+  - candidatos evaluados;
+  - etiqueta de entrada;
+  - resultado elegido.
+
 ---
 
 ## 2) Estado actual de la arquitectura
