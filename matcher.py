@@ -526,27 +526,37 @@ def _build_candidate_cache(indice_sqlite, wanted_tokens=None):
         _add_token_refs(name, tokens(os.path.splitext(os.path.basename(path))[0]), item, wanted_tokens=wanted_tokens)
     return {"title": title, "artist": artist, "name": name, "all": indice_sqlite or []}
 
-def _candidate_subset_from_tokens(candidate_cache, groups):
+def _candidate_subset_from_tokens(candidate_cache, groups, require_all_groups=False):
     if not candidate_cache:
         return candidate_cache.get("all") if candidate_cache else []
     selected = []
     seen_paths = set()
+    group_sets = []
     for group_name, token_values in groups:
         group = candidate_cache.get(group_name) or {}
+        group_paths = set()
         for tok in token_values or []:
             for item in group.get(tok, []):
                 path = item.get("path") or id(item)
+                group_paths.add(path)
                 if path in seen_paths:
                     continue
                 seen_paths.add(path)
                 selected.append(item)
+        if token_values:
+            group_sets.append(group_paths)
+    if require_all_groups and len(group_sets) > 1:
+        common = set.intersection(*group_sets)
+        if common:
+            return [item for item in selected if (item.get("path") or id(item)) in common]
     return selected
 
-def _candidate_subset_from_sqlite(mem_conn, path_lookup, groups):
+def _candidate_subset_from_sqlite(mem_conn, path_lookup, groups, require_all_groups=False):
     if mem_conn is None or not path_lookup:
         return []
     selected = []
     seen_paths = set()
+    group_sets = []
     try:
         cur = mem_conn.cursor()
         cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='track_tokens'")
@@ -556,6 +566,7 @@ def _candidate_subset_from_sqlite(mem_conn, path_lookup, groups):
             uniq_tokens = sorted({t for t in (token_values or []) if t})
             if not uniq_tokens:
                 continue
+            group_paths = set()
             placeholders = ",".join("?" for _ in uniq_tokens)
             cur.execute(
                 f"""
@@ -568,15 +579,30 @@ def _candidate_subset_from_sqlite(mem_conn, path_lookup, groups):
             )
             for (path,) in cur.fetchall():
                 norm = os.path.normpath(path or "")
+                group_paths.add(norm)
                 if not norm or norm in seen_paths:
                     continue
                 item = path_lookup.get(norm)
                 if item:
                     seen_paths.add(norm)
                     selected.append(item)
+            group_sets.append(group_paths)
     except Exception:
         return []
+    if require_all_groups and len(group_sets) > 1:
+        common = set.intersection(*group_sets)
+        if common:
+            return [item for item in selected if os.path.normpath(item.get("path") or "") in common]
     return selected
+
+def _sqlite_token_index_ready(mem_conn) -> bool:
+    try:
+        cur = mem_conn.cursor()
+        cur.execute("SELECT value FROM index_meta WHERE key='token_index_version'")
+        row = cur.fetchone()
+        return bool(row and row[0])
+    except Exception:
+        return False
 
 def _entry_perf_label(entrada):
     tags = (entrada or {}).get("tags") or {}
@@ -667,14 +693,14 @@ def _filtrar_por_artista_esperado(candidatos, artist_esperado_norm):
 # =============================================================================
 
 def _upgrade_por_alias(indice_sqlite, base_title: str, base_artist: str, base_duration,
-                       prefer_no_auto=True, tolerancia_duracion=3):
+                       prefer_no_auto=True, tolerancia_duracion=3, search_space=None):
     if not base_title or not base_artist: return None
     ctitle = canon_title(base_title)
     cartist = normalizar_artista(base_artist)
     if not ctitle or not cartist: return None
 
     candidatos = []
-    for x in indice_sqlite:
+    for x in (search_space if search_space is not None else indice_sqlite):
         xtags = (x.get("tags") or {})
         t = xtags.get("title") or ""
         a = xtags.get("artist") or ""
@@ -710,6 +736,7 @@ def procesar_bloque_con_orden(
     indice_sqlite = cargar_indice_desde_sqlite(mem_conn)
     quality_cache = _build_quality_caches(indice_sqlite)
     path_lookup = quality_cache.get("path", {})
+    sqlite_tokens_ready = _sqlite_token_index_ready(mem_conn)
     candidate_cache = None
     wanted_candidate_tokens = _wanted_tokens_for_block(bloque)
     bitrate_overrides = bitrate_overrides or {}
@@ -726,6 +753,21 @@ def procesar_bloque_con_orden(
         if candidate_cache is None:
             candidate_cache = _build_candidate_cache(indice_sqlite, wanted_tokens=wanted_candidate_tokens)
         return candidate_cache
+
+    def _search_space_for_tags(base_tags):
+        if not base_tags:
+            return indice_sqlite
+        groups = [
+            ("title", tokens(_titulo_puro(base_tags) or base_tags.get("title") or "")),
+            ("artist", tokens(_artista_con_fallback(base_tags))),
+        ]
+        has_query_tokens = any(values for _, values in groups)
+        candidates = _candidate_subset_from_sqlite(mem_conn, path_lookup, groups, require_all_groups=True)
+        if not candidates and not sqlite_tokens_ready:
+            candidates = _candidate_subset_from_tokens(_get_candidate_cache(), groups, require_all_groups=True)
+        if not candidates and (not sqlite_tokens_ready or not has_query_tokens):
+            return indice_sqlite
+        return candidates
 
     def _manual_lookup_cached(label: str) -> Optional[str]:
         for k in (
@@ -761,7 +803,7 @@ def procesar_bloque_con_orden(
                 return local_cache_generic[k][0], "local-aprendida"
         return None, None
 
-    def _record_stat(seq, phase, found, elapsed, full_scan=False, entrada=None, result_path="", candidate_count=None):
+    def _record_stat(seq, phase, found, elapsed, full_scan=False, entrada=None, result_path="", candidate_count=None, detail=""):
         if stats_list is None:
             return
         try:
@@ -776,6 +818,7 @@ def procesar_bloque_con_orden(
                 "label": _entry_perf_label(entrada) if entrada else "",
                 "ruta": (entrada or {}).get("ruta", "") if entrada else "",
                 "result_path": result_path or "",
+                "detail": detail or "",
             })
         except Exception:
             pass
@@ -857,7 +900,7 @@ def procesar_bloque_con_orden(
                     "title": _titulo_puro(base_tags),
                     "artist": _artista_con_fallback(base_tags),
                     "duration": base_tags.get("duration")
-                }, prefer_no_auto=True, quality_cache=quality_cache)
+                }, prefer_no_auto=True, quality_cache=quality_cache, search_space=_search_space_for_tags(base_tags))
 
             if mejor_cache:
                 b_new = mejor_cache["tags"].get("bitrate", 0)
@@ -891,7 +934,7 @@ def procesar_bloque_con_orden(
                 base_tags = entrada.get("tags") or {}
                 mejor_cache = None
                 if base_tags.get("title") or base_tags.get("artist"):
-                    mejor_cache = _mejor_por_similares(indice_sqlite, base_tags, prefer_no_auto=True, quality_cache=quality_cache)
+                    mejor_cache = _mejor_por_similares(indice_sqlite, base_tags, prefer_no_auto=True, quality_cache=quality_cache, search_space=_search_space_for_tags(base_tags))
                 if mejor_cache:
                     b_old = _bitrate_por_path_lookup(path_lookup, indice_sqlite, ruta_local)
                     b_new = mejor_cache["tags"].get("bitrate", 0)
@@ -930,7 +973,7 @@ def procesar_bloque_con_orden(
                 base_tags = entrada.get("tags") or {}
                 mejor_cache = None
                 if base_tags.get("title") or base_tags.get("artist"):
-                    mejor_cache = _mejor_por_similares(indice_sqlite, base_tags, prefer_no_auto=True, quality_cache=quality_cache)
+                    mejor_cache = _mejor_por_similares(indice_sqlite, base_tags, prefer_no_auto=True, quality_cache=quality_cache, search_space=_search_space_for_tags(base_tags))
                 if mejor_cache:
                     b_old = _bitrate_por_path_lookup(path_lookup, indice_sqlite, ruta_cache)
                     b_new = mejor_cache["tags"].get("bitrate", 0)
@@ -998,26 +1041,32 @@ def procesar_bloque_con_orden(
         full_scan_used = False
         scan_candidate_count = len(indice_sqlite)
         ruta_resultado_final = ""
+        perf_detail = []
 
         # -------- Fase 2: Por tags ----------
-        if tags:
+        if tags and (tokens(_titulo_puro(tags) or tags.get("title") or "") or tokens(_artista_con_fallback(tags))):
+            t_candidate = time.perf_counter()
             tag_groups = [
                 ("title", tokens(_titulo_puro(tags) or tags.get("title") or "")),
                 ("artist", tokens(_artista_con_fallback(tags))),
             ]
-            tag_candidates = _candidate_subset_from_sqlite(mem_conn, path_lookup, tag_groups)
-            if not tag_candidates:
-                tag_candidates = _candidate_subset_from_tokens(_get_candidate_cache(), tag_groups)
-            if not tag_candidates:
+            tag_has_tokens = any(values for _, values in tag_groups)
+            tag_candidates = _candidate_subset_from_sqlite(mem_conn, path_lookup, tag_groups, require_all_groups=True)
+            if not tag_candidates and not sqlite_tokens_ready:
+                tag_candidates = _candidate_subset_from_tokens(_get_candidate_cache(), tag_groups, require_all_groups=True)
+            if not tag_candidates and (not sqlite_tokens_ready or not tag_has_tokens):
                 tag_candidates = indice_sqlite
             scan_candidate_count = len(tag_candidates)
             full_scan_used = scan_candidate_count >= len(indice_sqlite)
+            perf_detail.append(f"candidate_select={time.perf_counter() - t_candidate:.3f}s")
+            t_score = time.perf_counter()
             for item in tag_candidates:
                 puntaje = calcular_puntaje(tags, item.get("tags", {}))
                 if puntaje > mejor_puntaje:
                     mejor_puntaje, candidatos = puntaje, [item]
                 elif puntaje == mejor_puntaje:
                     candidatos.append(item)
+            perf_detail.append(f"score_loop={time.perf_counter() - t_score:.3f}s")
 
             log_lines.append(
                 f"     🔎 Mejor puntaje (tags): {mejor_puntaje:.2f} con {len(candidatos)} coincidencias "
@@ -1026,6 +1075,7 @@ def procesar_bloque_con_orden(
 
             # Si es Tidal/netsearch, toleramos un poco más: intentamos “título suave”
             if es_net_id and (mejor_puntaje < 50 or not candidatos):
+                t_soft = time.perf_counter()
                 t_in = _titulo_puro(tags)
                 d_in = tags.get("duration")
                 cand_suaves = []
@@ -1041,6 +1091,7 @@ def procesar_bloque_con_orden(
                     cand_suaves.sort(key=lambda x: (x[0], (x[1].get("tags") or {}).get("bitrate", 0)))
                     candidatos = [it for _, it in cand_suaves[-5:]]  # top 5
                     mejor_puntaje = 60.0  # marcamos como suficiente para continuar
+                perf_detail.append(f"netsearch_soft_scan={time.perf_counter() - t_soft:.3f}s")
 
             if mejor_puntaje >= 50 and candidatos:
                 cand_valid = [c for c in candidatos if not c["tags"].get("auto_tags", False)] or candidatos
@@ -1054,9 +1105,11 @@ def procesar_bloque_con_orden(
                         cand_compat = _preferir_no_remix(cand_compat)
                     mejor = max(cand_compat, key=lambda x: x.get("tags", {}).get("bitrate", 0))
 
+                    t_refine = time.perf_counter()
                     mejor_global = _mejor_por_similares(indice_sqlite, {
                         "title": _titulo_puro(tags), "artist": artist_in, "duration": tags.get("duration"),
-                    }, prefer_no_auto=True, quality_cache=quality_cache)
+                    }, prefer_no_auto=True, quality_cache=quality_cache, search_space=tag_candidates)
+                    perf_detail.append(f"quality_refine={time.perf_counter() - t_refine:.3f}s")
                     if mejor_global and mejor_global["tags"].get("bitrate", 0) > mejor["tags"].get("bitrate", 0):
                         mejor = mejor_global
                         log_lines.append(f"     ✅ Mejorado por similares (max bitrate): {mejor['path']} (bitrate={fmt_bitrate(mejor['tags'].get('bitrate', 0))})")
@@ -1071,8 +1124,10 @@ def procesar_bloque_con_orden(
                     # sustituir remix por no-remix si aplica
                     try:
                         if not _es_remix(tags.get("title", "")) and _es_remix((mejor.get("tags") or {}).get("title", "")):
+                            t_alias = time.perf_counter()
                             alt = _upgrade_por_alias(indice_sqlite, _titulo_puro(tags), artist_in, tags.get("duration"),
-                                                     prefer_no_auto=True, tolerancia_duracion=15)
+                                                     prefer_no_auto=True, tolerancia_duracion=15, search_space=tag_candidates)
+                            perf_detail.append(f"alias_no_remix={time.perf_counter() - t_alias:.3f}s")
                             if alt and not _es_remix((alt.get("tags") or {}).get("title", "")) \
                                and alt["tags"].get("bitrate", 0) >= mejor["tags"].get("bitrate", 0):
                                 mejor = alt
@@ -1084,8 +1139,10 @@ def procesar_bloque_con_orden(
                     try:
                         need_artist = artist_in and (normalizar_artista(mejor["tags"].get("artist", "")) != artist_in)
                         if (mejor["tags"].get("bitrate", 0) or 0) < 320 or need_artist:
+                            t_alias = time.perf_counter()
                             cand_hi = _upgrade_por_alias(indice_sqlite, _titulo_puro(tags), artist_in, tags.get("duration"),
-                                                         prefer_no_auto=True, tolerancia_duracion=3)
+                                                         prefer_no_auto=True, tolerancia_duracion=3, search_space=tag_candidates)
+                            perf_detail.append(f"alias_quality={time.perf_counter() - t_alias:.3f}s")
                             if cand_hi and (cand_hi["tags"].get("bitrate", 0) > mejor["tags"].get("bitrate", 0) or need_artist):
                                 mejor = cand_hi
                                 log_lines.append(f"     🔁 Revisado alias: mejor/ajustado → {mejor['path']} (bitrate={fmt_bitrate(mejor['tags'].get('bitrate', 0))})")
@@ -1123,17 +1180,21 @@ def procesar_bloque_con_orden(
 
             nombre_archivo = os.path.basename(ruta)
             mejor_puntaje, candidatos = 0, []
+            t_candidate = time.perf_counter()
             name_groups = [
                 ("name", tokens(nombre_archivo)),
                 ("title", tokens(nombre_archivo)),
             ]
+            name_has_tokens = any(values for _, values in name_groups)
             name_candidates = _candidate_subset_from_sqlite(mem_conn, path_lookup, name_groups)
-            if not name_candidates:
+            if not name_candidates and not sqlite_tokens_ready:
                 name_candidates = _candidate_subset_from_tokens(_get_candidate_cache(), name_groups)
-            if not name_candidates:
+            if not name_candidates and (not sqlite_tokens_ready or not name_has_tokens):
                 name_candidates = indice_sqlite
             scan_candidate_count = len(name_candidates)
             full_scan_used = scan_candidate_count >= len(indice_sqlite)
+            perf_detail.append(f"name_candidate_select={time.perf_counter() - t_candidate:.3f}s")
+            t_score = time.perf_counter()
             for item in name_candidates:
                 cand_name = os.path.basename(item["path"]) if item.get("path") else ""
                 puntaje = sim_nombre(nombre_archivo, cand_name)
@@ -1141,6 +1202,7 @@ def procesar_bloque_con_orden(
                     mejor_puntaje, candidatos = puntaje, [item]
                 elif puntaje == mejor_puntaje:
                     candidatos.append(item)
+            perf_detail.append(f"name_score_loop={time.perf_counter() - t_score:.3f}s")
 
             log_lines.append(
                 f"     🔎 Mejor puntaje (nombre): {mejor_puntaje:.2f} con {len(candidatos)} coincidencias "
@@ -1158,7 +1220,7 @@ def procesar_bloque_con_orden(
                         log_lines.append("     🚫 Todos los candidatos por nombre son compuestos ajenos → no encontrada")
                         bloque_no_encontradas.append(ruta)
                         elapsed = time.perf_counter() - start_t
-                        _record_stat(seq, "nombre_scan_filtrado", False, elapsed, full_scan=True)
+                        _record_stat(seq, "nombre_scan_filtrado", False, elapsed, full_scan=full_scan_used, detail=" | ".join(perf_detail))
                         log_lines.append(f"     🕒 Tiempo: {elapsed:.2f} s")
                         log_queue.put({"seq": seq, "text": "\n".join(log_lines), "found": False})
                         continue
@@ -1184,11 +1246,14 @@ def procesar_bloque_con_orden(
                         pseudo_tags["duration"] = entrada["tags"]["duration"]
 
                     if pseudo_tags:
+                        t_equal = time.perf_counter()
+                        equal_space = name_candidates if name_candidates is not None else indice_sqlite
                         iguales = [
-                            x for x in indice_sqlite
+                            x for x in equal_space
                             if normalizar(x["tags"].get("title")) == normalizar(pseudo_tags.get("title", ""))
                             and (not pseudo_tags.get("artist") or normalizar_artista(x["tags"].get("artist")) == pseudo_tags.get("artist"))
                         ]
+                        perf_detail.append(f"derived_equal={time.perf_counter() - t_equal:.3f}s")
                         if iguales:
                             iguales_validos = [s for s in iguales if not s["tags"].get("auto_tags", False)] or iguales
                             iguales_validos = _preferir_no_remix(iguales_validos) if not _es_remix(nombre_archivo) else iguales_validos
@@ -1218,7 +1283,8 @@ def procesar_bloque_con_orden(
         elapsed = time.perf_counter() - start_t
         _record_stat(
             seq, final_phase, encontrado, elapsed, full_scan=full_scan_used,
-            entrada=entrada, result_path=ruta_resultado_final, candidate_count=scan_candidate_count
+            entrada=entrada, result_path=ruta_resultado_final, candidate_count=scan_candidate_count,
+            detail=" | ".join(perf_detail)
         )
         log_lines.append(f"     🕒 Tiempo: {elapsed:.2f} s")
         log_queue.put({"seq": seq, "text": "\n".join(log_lines), "found": encontrado})
@@ -1312,10 +1378,12 @@ def _format_perf_summary(stats, wall_elapsed, total_entries):
             label = item.get("label") or os.path.basename(item.get("ruta") or "") or "(sin etiqueta)"
             result = os.path.basename(item.get("result_path") or "")
             suffix = f" -> {result}" if result else ""
+            detail = item.get("detail") or ""
+            detail_suffix = f" | {detail}" if detail else ""
             lines.append(
                 f"  - #{int(item.get('seq', 0) or 0)} | {item.get('phase') or 'desconocida'} | "
                 f"{float(item.get('elapsed', 0.0) or 0.0):.3f} s | "
-                f"candidatos {int(item.get('candidate_count', 0) or 0)}/{index_size} | {label}{suffix}"
+                f"candidatos {int(item.get('candidate_count', 0) or 0)}/{index_size} | {label}{suffix}{detail_suffix}"
             )
     lines.append("===== FIN RESUMEN =====")
     return "\n".join(lines)
@@ -1347,12 +1415,13 @@ def generar_clave_entrada(entrada: dict) -> str:
     }, ensure_ascii=False, sort_keys=True)
     return hashlib.sha1(base.encode("utf-8")).hexdigest()
 
-def _mejor_por_similares(indice_sqlite, base_tags, prefer_no_auto=True, quality_cache=None):
+def _mejor_por_similares(indice_sqlite, base_tags, prefer_no_auto=True, quality_cache=None, search_space=None):
     cached = _best_quality_from_cache(quality_cache, base_tags, prefer_no_auto=prefer_no_auto, tolerancia=3)
     if cached:
         return cached
+    pool = search_space if search_space is not None else indice_sqlite
     candidatos = [
-        x for x in indice_sqlite
+        x for x in pool
         if tags_similares({
             "title": base_tags.get("title"),
             "artist": base_tags.get("artist"),

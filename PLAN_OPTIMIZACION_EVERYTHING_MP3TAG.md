@@ -125,3 +125,30 @@ Uso recomendado futuro:
 
 No sustituye a `mutagen`, porque Everything localiza archivos pero no interpreta tags musicales.
 
+## Fase 7 - Reduccion real de candidatos en el matcher
+
+Aplicado.
+
+La investigacion de los logs mostro que las entradas lentas no eran un caso aislado de canciones concretas. Habia tres patrones generales:
+
+- entradas con `tags` presentes pero sin tokens utiles de titulo/artista entraban igualmente en `tags_scan` y podian acabar puntuando contra toda la biblioteca;
+- la seleccion de candidatos por tags unia tokens de titulo y artista, lo que inflaba casos con tokens comunes como `mon`/`amour`;
+- algunos refinamientos posteriores (`quality_refine`, `alias_quality`, `derived_equal`) podian recorrer mas pistas de las que indicaba el contador principal.
+
+Cambios aplicados:
+
+- `tags_scan` se omite si no hay tokens utiles de titulo/artista;
+- la busqueda por tags usa interseccion titulo+artista cuando ambas senales existen, con fallback a union si la interseccion queda vacia;
+- los refinamientos trabajan sobre el subconjunto de candidatos ya filtrado;
+- si SQLite ya tiene `track_tokens`, una respuesta vacia no dispara la construccion cara de la cache RAM de fallback;
+- el log de entradas lentas muestra subtiempos internos: `candidate_select`, `score_loop`, `quality_refine`, `alias_quality`, `name_score_loop`, `derived_equal`, etc.
+
+Comparativa en frio, desactivando temporalmente la cache global de coincidencias y restaurandola despues:
+
+```text
+Antes: 32.32 s | max entrada 19.500 s | tags_scan total 61.25 s | nombre_scan max 14.578 s
+Despues: 12.38 s | max entrada 0.219 s | tags_scan total 0.16 s | nombre_scan max 0.219 s
+Biblioteca: 127718 pistas | Playlist: 105 entradas | Encontradas: 105/105
+```
+
+El caso `Zzoilo Aitana - Mon Amour Remix` paso de 14343 candidatos a 3 candidatos. El caso de `Daniela Romo` dejo de pagar un scoring completo por tags sin tokens utiles y quedo limitado a la busqueda por nombre.

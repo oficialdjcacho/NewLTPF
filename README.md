@@ -228,11 +228,14 @@ Sirve para revisar el flujo completo: previsualizacion, carga de indice, analisi
 Resultado de referencia tras estas optimizaciones con la playlist de prueba de 105 entradas:
 
 ```text
-Tiempo analisis: 31.87 s
+Tiempo analisis en frio sin cache global: 12.38 s
 Encontradas: 105/105
 Escaneo completo: 0
 Indexado incremental sin cambios: 5.66 s
+Maximo por entrada: 0.219 s
 ```
+
+La mejora mas reciente evita dos costes ocultos del matcher: no ejecuta `tags_scan` cuando una entrada no trae tokens utiles de titulo/artista, y para tags cruza titulo+artista antes de puntuar. Los logs de rendimiento muestran ahora subtiempos internos por entrada lenta (`candidate_select`, `score_loop`, `quality_refine`, `alias_quality`, `name_score_loop`, etc.) para detectar futuros cuellos de botella sin hacer ajustes exclusivos por cancion.
 
 ---
 
@@ -243,6 +246,7 @@ Indexado incremental sin cambios: 5.66 s
 - `GUIA_NUEVA_VERSION.md`: diseño y estado de la nueva UI.
 - `RESUMEN_CAMBIOS_Y_PLAN.md`: resumen de cambios y plan de rendimiento.
 - `PLAN_OPTIMIZACION_EVERYTHING_MP3TAG.md`: fases aplicadas y futuras ideas opcionales inspiradas en Everything y Mp3tag.
+- `INVESTIGACION_ENTRADAS_LENTAS.md`: causa raiz de las entradas lentas, cambios aplicados y comparativa de tiempos.
 
 ---
 
